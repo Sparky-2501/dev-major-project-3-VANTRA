@@ -1,0 +1,76 @@
+# ConfigMap = non-secret settings. Secrets (JWT_SECRET, INTERNAL_API_KEY) come from
+# the shared Secret "vantra-secrets" (create it with k8s/create-secret.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: matching-service, namespace: vantra }
+data:
+  SERVICE_NAME: "matching-service"
+  PORT: "3003"
+  REDIS_URL: "redis://redis:6379"
+  DEMO_MODE: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
+  OTEL_NODE_ENABLED_INSTRUMENTATIONS: "http,express,mongodb,ioredis"
+  MONGO_URL: "mongodb://mongo:27017/matching_db"
+  DRIVER_SERVICE_URL: "http://driver-service:3002"
+  PAYMENT_SERVICE_URL: "http://payment-service:3004"
+  OFFER_TIMEOUT_SEC: "15"
+  MAX_OFFER_ATTEMPTS: "3"
+  MAX_COMPENSATION_ROUNDS: "5"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: matching-service, namespace: vantra }
+spec:
+  # When an HPA manages the Deployment, replicas here is only the starting value.
+  replicas: 2
+  selector: { matchLabels: { app: matching-service } }
+  template:
+    metadata: { labels: { app: matching-service } }
+    spec:
+      containers:
+        - name: matching-service
+          image: vantra/matching-service:local
+          imagePullPolicy: IfNotPresent   # image is loaded into kind/minikube, not pulled
+          ports: [{ containerPort: 3003 }]
+          envFrom:
+            - configMapRef: { name: matching-service }
+            - secretRef: { name: vantra-secrets }
+          resources:
+            requests: { cpu: 200m, memory: 192Mi }
+            limits: { cpu: 1000m, memory: 384Mi }
+          # Readiness: "send me traffic?" -> 503 from /health removes the pod from the Service.
+          readinessProbe:
+            httpGet: { path: /health, port: 3003 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          # Liveness: "restart me?" -> same endpoint but a patient threshold, so a short
+          # Mongo/Redis blip does not cause restarts.
+          livenessProbe:
+            httpGet: { path: /health, port: 3003 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+---
+# ClusterIP Service: a stable name (matching-service) and kube-proxy spreads connections
+# across the ready pods (this is the load balancing).
+apiVersion: v1
+kind: Service
+metadata: { name: matching-service, namespace: vantra }
+spec:
+  selector: { app: matching-service }
+  ports: [{ port: 3003, targetPort: 3003 }]
+---
+# Scales matching-service on CPU. Needs metrics-server (kind: install it; minikube: `minikube addons enable metrics-server`).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: matching-service, namespace: vantra }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: matching-service }
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }

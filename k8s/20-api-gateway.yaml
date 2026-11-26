@@ -1,0 +1,63 @@
+# ConfigMap = non-secret settings. Secrets (JWT_SECRET, INTERNAL_API_KEY) come from
+# the shared Secret "vantra-secrets" (create it with k8s/create-secret.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: api-gateway, namespace: vantra }
+data:
+  SERVICE_NAME: "api-gateway"
+  PORT: "8080"
+  REDIS_URL: "redis://redis:6379"
+  DEMO_MODE: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
+  OTEL_NODE_ENABLED_INSTRUMENTATIONS: "http,express,mongodb,ioredis"
+  RIDER_SERVICE_URL: "http://rider-service:3001"
+  DRIVER_SERVICE_URL: "http://driver-service:3002"
+  MATCHING_SERVICE_URL: "http://matching-service:3003"
+  PAYMENT_SERVICE_URL: "http://payment-service:3004"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:3005"
+  RATE_LIMIT_PER_MIN: "600"
+  TRUST_PROXY: "1"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api-gateway, namespace: vantra }
+spec:
+  # When an HPA manages the Deployment, replicas here is only the starting value.
+  replicas: 2
+  selector: { matchLabels: { app: api-gateway } }
+  template:
+    metadata: { labels: { app: api-gateway } }
+    spec:
+      containers:
+        - name: api-gateway
+          image: vantra/api-gateway:local
+          imagePullPolicy: IfNotPresent   # image is loaded into kind/minikube, not pulled
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: api-gateway }
+            - secretRef: { name: vantra-secrets }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # Readiness: "send me traffic?" -> 503 from /health removes the pod from the Service.
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          # Liveness: "restart me?" -> same endpoint but a patient threshold, so a short
+          # Mongo/Redis blip does not cause restarts.
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+---
+# ClusterIP Service: a stable name (api-gateway) and kube-proxy spreads connections
+# across the ready pods (this is the load balancing).
+apiVersion: v1
+kind: Service
+metadata: { name: api-gateway, namespace: vantra }
+spec:
+  selector: { app: api-gateway }
+  ports: [{ port: 8080, targetPort: 8080 }]

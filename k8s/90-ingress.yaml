@@ -1,0 +1,17 @@
+# Entry point. Needs an ingress controller (kind: see README; minikube: `minikube addons enable ingress`).
+# Without one, use:  kubectl -n vantra port-forward svc/api-gateway 8080:8080
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vantra
+  namespace: vantra
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # keeps Socket.IO connections open
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: api-gateway, port: { number: 8080 } } }

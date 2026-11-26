@@ -1,0 +1,32 @@
+# Redis as a plain Deployment WITHOUT a disk: here it holds locks, the GEO set,
+# rate-limit counters, offers and the event stream. All of it is short-lived or
+# rebuildable (drivers re-send locations every few seconds, locks have TTLs). The
+# durable truth (rides, sagas, payments) is in Mongo. Trade-off: restarting Redis
+# loses in-flight offers and unread events. A production setup would use Redis
+# with persistence/replication (Sentinel or managed Redis).
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: vantra }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: redis, namespace: vantra }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports: [{ containerPort: 6379 }]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 300m, memory: 256Mi }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5

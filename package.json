@@ -1,0 +1,14 @@
+{
+  "name": "vantra",
+  "private": true,
+  "description": "Convenience scripts for the monorepo. Each service has its own package.json.",
+  "scripts": {
+    "env": "node scripts/make-env.js",
+    "sync": "node scripts/sync-common.js",
+    "check": "node scripts/check-all.js",
+    "test:unit": "npm --prefix services/matching-service test && npm --prefix services/notification-service test",
+    "up": "docker compose up --build",
+    "e2e": "node tests/e2e.js",
+    "demo:payment-down": "node scripts/demo-payment-down.js"
+  }
+}

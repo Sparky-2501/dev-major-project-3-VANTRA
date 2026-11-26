@@ -1,0 +1,11 @@
+{
+  "name": "vantra-tests",
+  "private": true,
+  "scripts": {
+    "e2e": "node e2e.js",
+    "load": "node load/booking.js"
+  },
+  "devDependencies": {
+    "autocannon": "^7.15.0"
+  }
+}
